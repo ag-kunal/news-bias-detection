@@ -4,7 +4,7 @@ The datasets used for the News Bias Detection research project are stored separa
 
 ## Dataset Access
 
-- **Shared download link:** [Add the team's Google Drive link here]
+- **Shared download link:**[ https://drive.google.com/file/d/1_ABeC4Ly4jwbRXusJYHR9XUojUIdUgCR/view?usp=sharing](https://drive.google.com/file/d/1_ABeC4Ly4jwbRXusJYHR9XUojUIdUgCR/view?usp=sharing)
 - **Dataset version:** Current cleaned dataset
 - **Access:** Project team members
 
