@@ -1,0 +1,27 @@
+# Datasets: keep locally, don't upload
+/data/*.csv
+/data/*.rar
+/data/*.zip
+/data/*.parquet
+/data/*.jsonl
+/data/IRE_Dataset/
+
+# Generated results
+/outputs/
+/results/
+
+# Python environment and cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
