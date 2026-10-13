@@ -1,20 +1,27 @@
-# Sentiment feature experiment
+# Sentiment Feature Experiment
 
-This module runs a standalone sentiment-only baseline on each dataset CSV separately, including `Combined_Dataset.csv`.
+This module extracts VADER sentiment features and evaluates a sentiment-only classifier independently on each of the five CSV datasets, including `Combined_Dataset.csv`.
 
 ## Features
 
-- `vader_compound_mean`: mean VADER compound score over sentences in an article.
-- `vader_positive_mean`, `vader_negative_mean`, `vader_neutral_mean`: mean sentence-level VADER proportions.
-- `positive_polar_word_count`, `negative_polar_word_count`: occurrence counts for text tokens in VADER's lexicon with scores >= +2 or <= -2 respectively.
-- `highly_polar_word_count`: sum of positive and negative polar-word counts.
-- Three `*_per_1000_words` features: the corresponding polar-word count per 1,000 alphabetic word tokens.
+| Feature | Meaning |
+|---|---|
+| `vader_compound_mean` | Mean VADER compound score across an article's sentences, ranging from -1 to +1. |
+| `vader_positive_mean` | Mean sentence-level positive proportion from VADER. |
+| `vader_negative_mean` | Mean sentence-level negative proportion from VADER. |
+| `vader_neutral_mean` | Mean sentence-level neutral proportion from VADER. |
+| `positive_polar_word_count` | Occurrences of tokens whose VADER lexicon score is at least +2. |
+| `negative_polar_word_count` | Occurrences of tokens whose VADER lexicon score is at most -2. |
+| `highly_polar_word_count` | Sum of positive and negative polar-word counts. |
+| `positive_polar_per_1000_words` | Positive polar-word count per 1,000 alphabetic word tokens. |
+| `negative_polar_per_1000_words` | Negative polar-word count per 1,000 alphabetic word tokens. |
+| `highly_polar_per_1000_words` | Total polar-word count per 1,000 alphabetic word tokens. |
 
-The +2/-2 thresholds are explicit project choices for strongly polar words, not VADER's compound-score sentiment-label thresholds. Sentiment is not the same thing as political bias; the classifier measures how predictive these sentiment-derived features are of the dataset's existing `Bias` labels.
+The +2/-2 lexicon thresholds are project choices for identifying strongly polar words; they are not VADER's compound-score class thresholds. Sentiment is not the same as political bias. The classifier tests whether these features help predict the datasets' existing `Bias` labels.
 
-## Run
+## Setup
 
-From the repository root, create and activate a virtual environment and install dependencies:
+Run commands from the repository root:
 
 ```bash
 python3 -m venv .venv
@@ -22,28 +29,51 @@ source .venv/bin/activate
 python -m pip install -r sentiment/requirements.txt
 ```
 
-Extract features for all CSVs in `data/IRE_Dataset/`:
+Place the five approved source CSVs in `data/IRE_Dataset/`.
+
+## Run the Pipeline
+
+### 1. Extract features
 
 ```bash
-python sentiment/extract_features.py
+python sentiment/extract_features.py --output-dir sentiment/outputs/features
 ```
 
-Train/evaluate a separate Logistic Regression baseline for each enriched dataset:
+Creates an enriched CSV per input dataset and `feature_extraction_summary.csv`. The source CSVs are not modified, and all input rows are retained by the extractor.
+
+### 2. Train sentiment-only baselines
 
 ```bash
-python sentiment/train_baseline.py
+python sentiment/train_baseline.py \
+  --features-dir sentiment/outputs/features \
+  --results-dir sentiment/outputs/results
 ```
 
-## Outputs (local only)
+Each dataset is evaluated separately with a standard-scaled Logistic Regression classifier, balanced class weights, a stratified 80/20 holdout split, and fixed random seed. Only the sentiment columns are predictors; `Bias` is the target.
 
-- `outputs/sentiment/features/*_sentiment.csv`: original data columns plus `Article_ID` and sentiment features.
-- `outputs/sentiment/features/feature_extraction_summary.csv`: input/output row counts.
-- `outputs/sentiment/results/sentiment_results.csv`: one summary row per dataset.
-- `outputs/sentiment/results/sentiment_classification_report.csv`: precision, recall, F1, and support per class.
-- `outputs/sentiment/results/confusion_matrices/`: confusion matrices by dataset.
+Outputs include:
 
-The source data is never modified. IDs are generated from the source filename and row order, so keep the source CSV order fixed to preserve them.
+- `sentiment/outputs/results/sentiment_results.csv`: one summary row per dataset, including macro-F1, accuracy, balanced accuracy, and macro precision/recall.
+- `sentiment/outputs/results/sentiment_classification_report.csv`: per-class precision, recall, F1, and support.
+- `sentiment/outputs/results/confusion_matrices/`: confusion matrices as CSV files.
 
-## Evaluation notes
+### 3. Generate box plots
 
-The classifier uses only the sentiment features (never `Title`, `Text`, `Source`, or any other non-sentiment columns as predictors). `Bias` is the target. Each dataset is evaluated separately using the same 80/20 stratified train/test split seed, a standard-scaled Logistic Regression model, and balanced class weights. Macro-F1 and per-class metrics should be considered alongside accuracy, particularly due to class imbalance. The combined dataset may overlap with the individual datasets, so treat its score as a separate dataset experiment rather than independent confirmation.
+```bash
+python sentiment/plot_features.py \
+  --features-dir sentiment/outputs/features \
+  --output-dir sentiment/outputs/results/boxplots
+```
+
+The plotting script creates four box plots per dataset, grouped by `Bias`: mean VADER compound score, positive polar words per 1,000 words, negative polar words per 1,000 words, and total polar words per 1,000 words. These plots are exploratory summaries; they do not demonstrate causation or prove that a feature improves classification.
+
+## Data and Git Policy
+
+- Keep original CSVs in `data/IRE_Dataset/` locally; do not commit them.
+- Keep enriched feature CSVs and extraction summaries in `sentiment/outputs/features/` locally; do not commit them.
+- Commit code and documentation. Commit only the final, useful model summary tables and plots under `sentiment/outputs/results/` when appropriate to share.
+- Check `git status` before every commit to ensure no original or enriched data files are staged.
+
+## Interpretation Notes
+
+Macro-F1 and per-class metrics matter because the label distribution is imbalanced. Compare dataset scores cautiously because datasets differ in size and content. `Combined_Dataset.csv` may overlap with the individual datasets, so its score should be treated as a separate experiment rather than independent confirmation.
