@@ -1,0 +1,4 @@
+actual_label,predicted_left,predicted_center,predicted_right
+actual_left,475,736,397
+actual_center,176,376,146
+actual_right,327,558,287
