@@ -4,9 +4,6 @@ This module implements the **Readability Score** feature extraction, statistical
 
 It investigates whether linguistic accessibility, structural sentence complexity, and syllable-level characteristics differ across political leanings (**Left**, **Center**, and **Right**) in news journalism.
 
-> [!TIP]
-> **Need to present or interpret these results in simple words?** Check out [`RESULTS_EXPLANATION.md`](RESULTS_EXPLANATION.md) for a plain-English walkthrough of all terms (F1-score, precision, recall, confusion matrix), what every graph means, and ready-made presentation talking points.
-
 ---
 
 ## 1. Theoretical Motivation
