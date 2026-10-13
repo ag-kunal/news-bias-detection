@@ -7,9 +7,8 @@
 /data/IRE_Dataset/
 
 # Generated results
-/outputs/
-/results/
 /readability/outputs/features/
+/sentiment/outputs/features
 
 # Python environment and cache
 .venv/
