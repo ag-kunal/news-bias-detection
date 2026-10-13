@@ -11,7 +11,7 @@ The datasets are stored separately from this repository. See [`data/README.md`](
 - Sentiment features (VADER)
 - Adjective features
 - Punctuation features
-- Readability and lexical features
+- Readability and lexical features ([`readability/`](readability/README.md))
 - Feature combination and ML evaluation
 
 Feature-extraction scripts and experiments will be added as the project progresses.
