@@ -9,7 +9,7 @@ The datasets are stored separately from this repository. See [`data/README.md`](
 ## Planned Feature Extraction
 
 - Sentiment features (VADER)
-- Adjective features
+- Adjective features ([`Adjective/`](Adjective/README.md))
 - Punctuation features
 - Readability and lexical features ([`readability/`](readability/README.md))
 - Feature combination and ML evaluation
