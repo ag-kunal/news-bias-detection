@@ -9,6 +9,7 @@
 # Generated results
 /readability/outputs/features/
 /sentiment/outputs/features
+/Adjective/outputs/features/
 
 # Python environment and cache
 .venv/
