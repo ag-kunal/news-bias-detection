@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create local sentiment-enriched copies of every CSV in data/IRE_Dataset."""
+"""Create local sentiment-enriched copies of every CSV in data/."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pandas as pd
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "IRE_Dataset"
+DEFAULT_INPUT_DIR = PROJECT_ROOT / "data"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "sentiment" / "features"
 POLAR_THRESHOLD = 2.0
 
@@ -91,6 +91,8 @@ def normalize_columns(df: pd.DataFrame, file_path: Path) -> pd.DataFrame:
     df = df.rename(columns=renames)
     if "Text" not in df.columns:
         raise ValueError(f"{file_path.name}: no 'Text' (or 'content') column found. Columns: {list(df.columns)}")
+    if "Bias" not in df.columns:
+        raise ValueError(f"{file_path.name}: no 'Bias' label column found.")
     return df
 
 
@@ -133,9 +135,8 @@ def main() -> None:
         feature_df = pd.DataFrame(features, columns=FEATURE_COLUMNS)
         # Keep all original columns; create an ID only in the derived file.
         result = df.copy()
-        if "Article_ID" in result.columns:
-            result = result.drop(columns=["Article_ID"])
-        result.insert(0, "Article_ID", article_ids)
+        if "Article_ID" not in result.columns:
+            result.insert(0, "Article_ID", article_ids)
         for col in FEATURE_COLUMNS:
             result[col] = feature_df[col].values
 

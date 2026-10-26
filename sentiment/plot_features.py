@@ -12,8 +12,9 @@ import numpy as np
 import pandas as pd
 
 SENTIMENT_DIR = Path(__file__).resolve().parent
-DEFAULT_FEATURE_DIR = SENTIMENT_DIR / "outputs" / "features"
-DEFAULT_OUTPUT_DIR = SENTIMENT_DIR / "outputs" / "results" / "boxplots"
+PROJECT_ROOT = SENTIMENT_DIR.parent
+DEFAULT_FEATURE_DIR = PROJECT_ROOT / "outputs" / "sentiment" / "features"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "sentiment" / "results" / "boxplots"
 BIAS_ORDER = ["left", "center", "right"]
 
 # Use per-1,000-word counts for polar words so longer articles do not

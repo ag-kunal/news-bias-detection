@@ -1,501 +1,425 @@
+#!/usr/bin/env python3
+"""Extract punctuation features and compare them across article-bias labels.
 
+Run from the repository root:
+    python Punctuation/punctuation_analysis.py
+
+Optional:
+    python Punctuation/punctuation_analysis.py --input-dir data --output-dir outputs/punctuation
+"""
+from __future__ import annotations
+
+import argparse
 import re
-import unicodedata
-from collections import Counter
+from pathlib import Path
 
-import nltk
-import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
+import pandas as pd
+from scipy.stats import kruskal
 
-from nltk.tokenize import sent_tokenize
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_INPUT_DIR = PROJECT_ROOT / "data"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "punctuation"
 
+LABEL_ORDER = ["left", "center", "right"]
 
-# Download the NLTK sentence-tokenization resources.
-nltk.download("punkt", quiet=True)
-nltk.download("punkt_tab", quiet=True)
-
-sns.set_theme(style="whitegrid")
-
-DATASET_PATH = "Combined_Dataset.csv"
-OUTPUT_CSV = "punctuation_analysis_results.csv"
-PLOT_DIR = "punctuation_plots"
-
-
-# ---------------------------------------------------------
-# Common helper functions
-# ---------------------------------------------------------
-
-def count_words(text):
-    """Count word-like tokens without counting punctuation."""
-    if not isinstance(text, str) or not text.strip():
-        return 0
-
-    return len(re.findall(r"\b[\w]+(?:['’][\w]+)*\b", text))
-
-
-def count_sentences(text):
-    """Count sentences using NLTK."""
-    if not isinstance(text, str) or not text.strip():
-        return 0
-
-    return len(sent_tokenize(text.strip()))
-
-
-def count_all_punctuation(text):
-    """Count Unicode punctuation characters in the text."""
-    if not isinstance(text, str):
-        return 0
-
-    return sum(
-        1
-        for char in text
-        if unicodedata.category(char).startswith("P")
-    )
-
-
-def count_nonterminal_punctuation(text):
-    """
-    Count punctuation excluding periods, question marks,
-    and exclamation marks.
-    """
-    if not isinstance(text, str):
-        return 0
-
-    excluded = {".", "?", "!"}
-
-    return sum(
-        1
-        for char in text
-        if (
-            unicodedata.category(char).startswith("P")
-            and char not in excluded
-        )
-    )
-
-
-# Punctuation categories used in features 3 and 4.
-PUNCTUATION_PATTERNS = {
+PUNCTUATION = {
+    "period": r"\.",
     "comma": r",",
-    "semicolon": r";",
-    "colon": r":",
-    "dash": r"[-\u2010-\u2015\u2212]",
-    "parentheses": r"[()]",
-    "quotation_marks": r"""["'\u2018\u2019\u201c\u201d\u00ab\u00bb]""",
     "question_mark": r"\?",
     "exclamation_mark": r"!",
-    "period": r"\.",
+    "semicolon": r";",
+    "colon": r":",
+    "single_quote": r"['‘’]",
+    "double_quote": r'["“”]',
+    "parentheses": r"[()]",
     "square_brackets": r"[\[\]]",
-    "slash": r"[/\\]",
-    "ellipsis_character": r"\u2026",
+    "dash_or_hyphen": r"[-‐‑‒–—]",
+    "ellipsis": r"…",
 }
 
+WORD_RE = re.compile(
+    r"\b[\w]+(?:['’][\w]+)*\b",
+    flags=re.UNICODE,
+)
 
-def get_punctuation_counts(text):
-    """Return counts for each selected punctuation category."""
-    if not isinstance(text, str):
+
+def extract_punctuation_features(text: object) -> dict[str, float | int]:
+    """Count punctuation and normalize counts per 1,000 word tokens."""
+    if pd.isna(text):
         text = ""
 
-    return {
-        name: len(re.findall(pattern, text))
-        for name, pattern in PUNCTUATION_PATTERNS.items()
-    }
+    text = str(text)
+    word_count = len(WORD_RE.findall(text))
+    denominator = max(word_count, 1)
+
+    features: dict[str, float | int] = {"word_count": word_count}
+    total = 0
+
+    for name, pattern in PUNCTUATION.items():
+        count = len(re.findall(pattern, text))
+        features[f"{name}_count"] = count
+        features[f"{name}_per_1000_words"] = (
+            count * 1000.0 / denominator
+        )
+        total += count
+
+    features["total_punctuation_count"] = total
+    features["total_punctuation_per_1000_words"] = (
+        total * 1000.0 / denominator
+    )
+
+    features["exclamation_question_per_1000_words"] = (
+        features["exclamation_mark_count"]
+        + features["question_mark_count"]
+    ) * 1000.0 / denominator
+
+    return features
 
 
-# ---------------------------------------------------------
-# FEATURE 1: Punctuation density per 100 words
-# ---------------------------------------------------------
+def benjamini_hochberg(p_values: list[float]) -> list[float]:
+    """Return Benjamini-Hochberg adjusted p-values in original order."""
+    n = len(p_values)
+    if n == 0:
+        return []
 
-def punctuation_density(text):
-    """
-    Return punctuation density per 100 words.
+    values = np.asarray(p_values, dtype=float)
+    order = np.argsort(values)
+    adjusted_sorted = np.empty(n, dtype=float)
+    running_min = 1.0
 
-    Returns both:
-      - density_all: all punctuation
-      - density_nonterminal: excluding '.', '?' and '!'
+    for reverse_idx in range(n - 1, -1, -1):
+        rank = reverse_idx + 1
+        idx = order[reverse_idx]
+        running_min = min(
+            running_min,
+            values[idx] * n / rank,
+        )
+        adjusted_sorted[reverse_idx] = min(running_min, 1.0)
 
-    Returns NaN when the text contains no words.
-    """
-    words = count_words(text)
-
-    if words == 0:
-        return {
-            "punctuation_density_all": float("nan"),
-            "punctuation_density_nonterminal": float("nan"),
-        }
-
-    total = count_all_punctuation(text)
-    nonterminal = count_nonterminal_punctuation(text)
-
-    return {
-        "punctuation_density_all": total / words * 100,
-        "punctuation_density_nonterminal": (
-            nonterminal / words * 100
-        ),
-    }
+    result = np.empty(n, dtype=float)
+    result[order] = adjusted_sorted
+    return result.tolist()
 
 
-# ---------------------------------------------------------
-# FEATURE 2: Punctuation per sentence
-# ---------------------------------------------------------
+def normalize_columns(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Normalize common column-name variants without altering row content."""
+    mapping = {}
 
-def punctuation_per_sentence(text):
-    """
-    Return average punctuation marks per sentence.
+    for col in df.columns:
+        key = re.sub(r"[^a-z]", "", str(col).lower())
 
-    Returns both:
-      - punctuation_per_sentence_all
-      - punctuation_per_sentence_nonterminal
-    """
-    sentences = count_sentences(text)
+        if key in {"text", "content", "articletext", "body"}:
+            mapping[col] = "Text"
+        elif key == "bias":
+            mapping[col] = "Bias"
+        elif key == "title":
+            mapping[col] = "Title"
+        elif key == "source":
+            mapping[col] = "Source"
 
-    if sentences == 0:
-        return {
-            "punctuation_per_sentence_all": float("nan"),
-            "punctuation_per_sentence_nonterminal": float("nan"),
-        }
-
-    total = count_all_punctuation(text)
-    nonterminal = count_nonterminal_punctuation(text)
-
-    return {
-        "punctuation_per_sentence_all": total / sentences,
-        "punctuation_per_sentence_nonterminal": (
-            nonterminal / sentences
-        ),
-    }
-
-
-# ---------------------------------------------------------
-# FEATURE 3: Punctuation-specific rates per 100 words
-# ---------------------------------------------------------
-
-def punctuation_specific_rates(text):
-    """
-    Return the rate of each selected punctuation category
-    per 100 words.
-    """
-    words = count_words(text)
-    counts = get_punctuation_counts(text)
-
-    if words == 0:
-        return {
-            f"rate_{name}": float("nan")
-            for name in counts
-        }
-
-    return {
-        f"rate_{name}": count / words * 100
-        for name, count in counts.items()
-    }
-
-
-# ---------------------------------------------------------
-# FEATURE 4: Relative punctuation composition
-# ---------------------------------------------------------
-
-def relative_punctuation_composition(text):
-    """
-    Return the proportion of each tracked punctuation type
-    among all punctuation marks in the tracked categories.
-
-    These proportions sum to 1 when at least one tracked
-    punctuation mark is present.
-    """
-    counts = get_punctuation_counts(text)
-    total_tracked = sum(counts.values())
-
-    if total_tracked == 0:
-        return {
-            f"composition_{name}": float("nan")
-            for name in counts
-        }
-
-    return {
-        f"composition_{name}": count / total_tracked
-        for name, count in counts.items()
-    }
-
-
-# ---------------------------------------------------------
-# Main driver
-# ---------------------------------------------------------
-
-def run_analysis():
-    import os
-
-    os.makedirs(PLOT_DIR, exist_ok=True)
-
-    df = pd.read_csv(DATASET_PATH)
-
-    required_columns = {"Text", "Bias", "StoryID"}
-    missing = required_columns - set(df.columns)
+    df = df.rename(columns=mapping)
+    missing = {"Text", "Bias"} - set(df.columns)
 
     if missing:
-        raise ValueError(f"Missing columns: {missing}")
+        raise ValueError(
+            f"{path.name}: missing required columns "
+            f"{sorted(missing)}; found {list(df.columns)}"
+        )
 
-    # Normalize labels while preserving the original data.
-    df["Bias"] = df["Bias"].astype("string").str.strip().str.lower()
+    return df
 
-    bias_mapping = {
-        "left": "Left",
-        "left-leaning": "Left",
-        "center": "Center",
-        "centre": "Center",
-        "center-leaning": "Center",
-        "right": "Right",
-        "right-leaning": "Right",
+
+def analyze_dataset(
+    csv_path: Path,
+    output_dir: Path,
+) -> tuple[dict, list[dict]]:
+    print(f"\nProcessing {csv_path.name} ...")
+
+    df = normalize_columns(
+        pd.read_csv(
+            csv_path,
+            encoding="utf-8-sig",
+            low_memory=False,
+        ),
+        csv_path,
+    )
+
+    original_rows = len(df)
+
+    features = pd.DataFrame(
+        [
+            extract_punctuation_features(value)
+            for value in df["Text"]
+        ],
+        index=df.index,
+    )
+
+    result = df.copy()
+
+    # IDs are added to derived output only.
+    result.insert(
+        0,
+        "Article_ID",
+        [
+            f"{csv_path.stem}_{i:06d}"
+            for i in range(1, len(df) + 1)
+        ],
+    )
+
+    result = pd.concat([result, features], axis=1)
+
+    feature_dir = output_dir / "features"
+    summary_dir = output_dir / "summaries"
+    plot_dir = output_dir / "plots"
+
+    for directory in (feature_dir, summary_dir, plot_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    feature_path = (
+        feature_dir / f"{csv_path.stem}_punctuation.csv"
+    )
+    result.to_csv(feature_path, index=False)
+
+    # Normalize labels only in the derived result used for analysis.
+    result["Bias"] = (
+        result["Bias"]
+        .astype("string")
+        .str.strip()
+        .str.lower()
+    )
+
+    rate_columns = [
+        f"{name}_per_1000_words"
+        for name in PUNCTUATION
+    ]
+    rate_columns += [
+        "total_punctuation_per_1000_words",
+        "exclamation_question_per_1000_words",
+    ]
+
+    valid = result[
+        result["Bias"].isin(LABEL_ORDER)
+    ].copy()
+
+    grouped = valid.groupby("Bias")[rate_columns].agg(
+        ["count", "mean", "median", "std"]
+    )
+    grouped.to_csv(
+        summary_dir / f"{csv_path.stem}_by_bias.csv"
+    )
+
+    # Kruskal-Wallis tests across available bias classes.
+    stats_rows = []
+
+    for feature in rate_columns:
+        groups = [
+            valid.loc[valid["Bias"] == label, feature]
+            .dropna()
+            .to_numpy()
+            for label in LABEL_ORDER
+        ]
+        groups = [group for group in groups if len(group) > 0]
+        combined_values = (
+            np.concatenate(groups)
+            if groups
+            else np.array([])
+        )
+
+        if (
+            len(groups) >= 2
+            and len(combined_values) > len(groups)
+        ):
+            if len(np.unique(combined_values)) <= 1:
+                statistic, p_value = 0.0, 1.0
+            else:
+                try:
+                    statistic, p_value = kruskal(*groups)
+                except ValueError:
+                    statistic, p_value = np.nan, np.nan
+        else:
+            statistic, p_value = np.nan, np.nan
+
+        stats_rows.append({
+            "dataset": csv_path.name,
+            "feature": feature,
+            "test": "Kruskal-Wallis",
+            "H_statistic": statistic,
+            "p_value": p_value,
+            "n_valid_rows": len(valid),
+            "labels_tested": "|".join(
+                label
+                for label in LABEL_ORDER
+                if (valid["Bias"] == label).any()
+            ),
+        })
+
+    # Adjust p-values within this dataset.
+    finite_indices = [
+        i
+        for i, row in enumerate(stats_rows)
+        if np.isfinite(row["p_value"])
+    ]
+
+    adjusted = benjamini_hochberg([
+        stats_rows[i]["p_value"]
+        for i in finite_indices
+    ])
+
+    for i, p_adj in zip(finite_indices, adjusted):
+        stats_rows[i]["p_value_BH"] = p_adj
+
+    for row in stats_rows:
+        row.setdefault("p_value_BH", np.nan)
+        row["significant_BH_0_05"] = (
+            bool(row["p_value_BH"] < 0.05)
+            if pd.notna(row["p_value_BH"])
+            else False
+        )
+
+    pd.DataFrame(stats_rows).to_csv(
+        summary_dir
+        / f"{csv_path.stem}_significance_tests.csv",
+        index=False,
+    )
+
+    # Plot mean punctuation rates by bias label.
+    means = (
+        valid.groupby("Bias")[rate_columns]
+        .mean()
+        .reindex(LABEL_ORDER)
+        .dropna(how="all")
+    )
+
+    if not means.empty:
+        plot_columns = [
+            f"{name}_per_1000_words"
+            for name in PUNCTUATION
+        ]
+
+        ax = means[plot_columns].T.plot(
+            kind="bar",
+            figsize=(14, 7),
+            width=0.82,
+        )
+
+        ax.set_title(
+            f"Punctuation rates by bias label — {csv_path.stem}"
+        )
+        ax.set_xlabel("Punctuation type")
+        ax.set_ylabel("Mean occurrences per 1,000 words")
+        ax.set_xticklabels(
+            [
+                name.replace("_", " ")
+                for name in PUNCTUATION
+            ],
+            rotation=35,
+            ha="right",
+        )
+        ax.legend(title="Bias label")
+        ax.grid(axis="y", linestyle="--", alpha=0.35)
+
+        plt.tight_layout()
+        plt.savefig(
+            plot_dir / f"{csv_path.stem}_punctuation_rates.png",
+            dpi=180,
+            bbox_inches="tight",
+        )
+        plt.close()
+
+    print(
+        f"  rows preserved: {original_rows:,}; "
+        f"features: {feature_path}"
+    )
+
+    manifest = {
+        "dataset": csv_path.name,
+        "input_rows": original_rows,
+        "output_rows": len(result),
+        "missing_text_cells": int(df["Text"].isna().sum()),
+        "valid_bias_rows": len(valid),
+        "feature_file": str(feature_path.relative_to(output_dir)),
     }
 
-    df["Bias"] = df["Bias"].map(bias_mapping).fillna(df["Bias"])
+    return manifest, stats_rows
 
-    # Treat missing text as empty for feature extraction.
-    df["Text"] = df["Text"].fillna("").astype(str)
 
-    # Calculate the basic counts once per record.
-    df["word_count"] = df["Text"].apply(count_words)
-    df["sentence_count"] = df["Text"].apply(count_sentences)
-    df["punctuation_count"] = df["Text"].apply(
-        count_all_punctuation
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=DEFAULT_INPUT_DIR,
+        help=f"Directory containing dataset CSVs (default: {DEFAULT_INPUT_DIR})",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Directory for features, summaries and plots (default: {DEFAULT_OUTPUT_DIR})",
     )
 
-    
-    # Calculate title features separately.
-    df["Title"] = df["Title"].fillna("").astype(str)
+    args = parser.parse_args()
+    input_dir = args.input_dir.expanduser().resolve()
+    output_dir = args.output_dir.expanduser().resolve()
 
-    df["title_word_count"] = df["Title"].apply(count_words)
-    df["title_punctuation_count"] = df["Title"].apply(
-        count_all_punctuation
-    )
-
-    # Title punctuation density
-    title_density = df["Title"].apply(punctuation_density)
-    df = pd.concat(
-        [
-            df,
-            pd.DataFrame(
-                [
-                    {f"title_{k}": v for k, v in features.items()}
-                    for features in title_density
-                ],
-                index=df.index,
-            ),
-        ],
-        axis=1,
-    )
-
-    # Title-specific punctuation rates
-    title_rates = df["Title"].apply(punctuation_specific_rates)
-    df = pd.concat(
-        [
-            df,
-            pd.DataFrame(
-                [
-                    {f"title_{k}": v for k, v in features.items()}
-                    for features in title_rates
-                ],
-                index=df.index,
-            ),
-        ],
-        axis=1,
-    )
-
-    # Title relative punctuation composition
-    title_composition = df["Title"].apply(
-        relative_punctuation_composition
-    )
-    df = pd.concat(
-        [
-            df,
-            pd.DataFrame(
-                [
-                    {f"title_{k}": v for k, v in features.items()}
-                    for features in title_composition
-                ],
-                index=df.index,
-            ),
-        ],
-        axis=1,
-    )
-
-    # Apply the four feature functions.
-    feature_groups = [
-        df["Text"].apply(punctuation_density),
-        df["Text"].apply(punctuation_per_sentence),
-        df["Text"].apply(punctuation_specific_rates),
-        df["Text"].apply(relative_punctuation_composition),
-    ]
-
-    for feature_group in feature_groups:
-        features = pd.DataFrame(
-            feature_group.tolist(),
-            index=df.index
+    if not input_dir.is_dir():
+        raise FileNotFoundError(
+            f"Dataset directory not found: {input_dir}"
         )
-        df = pd.concat([df, features], axis=1)
 
-    # Save record-level results.
-    df.to_csv(OUTPUT_CSV, index=False)
+    csv_files = sorted(
+        input_dir.glob("*.csv"),
+        key=lambda path: path.name.lower(),
+    )
 
-    print("\nDataset shape:", df.shape)
-    print("\nRecords per category:")
-    print(df["Bias"].value_counts(dropna=False))
+    if not csv_files:
+        raise FileNotFoundError(
+            f"No CSV files found in {input_dir}"
+        )
 
-    # Summary statistics for the main features.
-    summary_features = [
-        "punctuation_density_all",
-        "punctuation_density_nonterminal",
-        "punctuation_per_sentence_all",
-        "punctuation_per_sentence_nonterminal",
-    ]
+    manifest_rows = []
+    all_stats = []
 
-    print("\nSummary statistics:")
+    for csv_path in csv_files:
+        try:
+            manifest, stats = analyze_dataset(
+                csv_path,
+                output_dir,
+            )
+            manifest_rows.append(manifest)
+            all_stats.extend(stats)
+        except Exception as exc:
+            print(f"  ERROR: {csv_path.name}: {exc}")
+
+    if not manifest_rows:
+        raise RuntimeError(
+            "No datasets processed successfully; see errors above."
+        )
+
+    pd.DataFrame(manifest_rows).to_csv(
+        output_dir / "punctuation_run_manifest.csv",
+        index=False,
+    )
+    pd.DataFrame(all_stats).to_csv(
+        output_dir
+        / "punctuation_significance_tests_all_datasets.csv",
+        index=False,
+    )
+
     print(
-        df.groupby("Bias")[summary_features]
-        .agg(["count", "mean", "median", "std"])
-        .round(4)
+        f"\nCompleted {len(manifest_rows)} dataset(s). "
+        f"Outputs: {output_dir}"
     )
-
-    # Check repeated article identifiers.
-    print("\nStoryID audit:")
-    print("Total records:", len(df))
-    print("Unique StoryIDs:", df["StoryID"].nunique())
-    print("Records with repeated StoryIDs:",
-          df["StoryID"].duplicated(keep=False).sum())
-
-    # -------------------------
-    # Plot 1: Punctuation density
-    # -------------------------
-    plot_boxplots(
-        df,
-        [
-            "punctuation_density_all",
-            "punctuation_density_nonterminal",
-        ],
-        "Punctuation Density by Political Leaning",
-        "Punctuation marks per 100 words",
-        "01_punctuation_density.png",
+    print(
+        "Note: p-values indicate association, not causation. "
+        "Consider effect sizes and dataset overlap before drawing conclusions."
     )
-
-    # -------------------------
-    # Plot 2: Punctuation per sentence
-    # -------------------------
-    plot_boxplots(
-        df,
-        [
-            "punctuation_per_sentence_all",
-            "punctuation_per_sentence_nonterminal",
-        ],
-        "Punctuation per Sentence by Political Leaning",
-        "Punctuation marks per sentence",
-        "02_punctuation_per_sentence.png",
-    )
-
-    # -------------------------
-    # Plot 3: Individual punctuation rates
-    # -------------------------
-    rate_columns = [
-        f"rate_{name}" for name in PUNCTUATION_PATTERNS
-    ]
-
-    plot_feature_panels(
-        df,
-        rate_columns,
-        "Punctuation-Specific Rates by Political Leaning",
-        "Occurrences per 100 words",
-        "03_punctuation_specific_rates.png",
-    )
-
-    # -------------------------
-    # Plot 4: Relative composition
-    # -------------------------
-    composition_columns = [
-        f"composition_{name}"
-        for name in PUNCTUATION_PATTERNS
-    ]
-
-    plot_feature_panels(
-        df,
-        composition_columns,
-        "Relative Punctuation Composition by Political Leaning",
-        "Proportion of tracked punctuation",
-        "04_relative_punctuation_composition.png",
-    )
-
-    print(f"\nResults saved to: {OUTPUT_CSV}")
-    print(f"Plots saved in: {PLOT_DIR}/")
-
-
-# ---------------------------------------------------------
-# Plotting helpers
-# ---------------------------------------------------------
-
-def plot_boxplots(df, columns, title, ylabel, filename):
-    plot_df = df.melt(
-        id_vars=["Bias"],
-        value_vars=columns,
-        var_name="Feature",
-        value_name="Value",
-    )
-
-    plot_df = plot_df.dropna(subset=["Value"])
-
-    plt.figure(figsize=(12, 6))
-    sns.boxplot(
-        data=plot_df,
-        x="Feature",
-        y="Value",
-        hue="Bias",
-        order=columns,
-        showfliers=False,
-    )
-
-    plt.title(title)
-    plt.xlabel("")
-    plt.ylabel(ylabel)
-    plt.xticks(rotation=15, ha="right")
-    plt.tight_layout()
-    plt.savefig(f"{PLOT_DIR}/{filename}", dpi=200)
-    plt.close()
-
-
-def plot_feature_panels(df, columns, title, ylabel, filename):
-    """
-    Plot each feature in a separate panel so features with
-    different scales remain interpretable.
-    """
-    ncols = 3
-    nrows = (len(columns) + ncols - 1) // ncols
-
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(16, 4.5 * nrows),
-    )
-
-    axes = axes.flatten()
-
-    for ax, column in zip(axes, columns):
-        sns.boxplot(
-            data=df,
-            x="Bias",
-            y=column,
-            order=["Left", "Center", "Right"],
-            showfliers=False,
-            ax=ax,
-        )
-        ax.set_title(column.replace("_", " ").replace("rate ", ""))
-        ax.set_xlabel("")
-        ax.set_ylabel(ylabel)
-
-    for ax in axes[len(columns):]:
-        ax.set_visible(False)
-
-    fig.suptitle(title, fontsize=16, y=1.002)
-    fig.tight_layout()
-    fig.savefig(f"{PLOT_DIR}/{filename}", dpi=200,
-                bbox_inches="tight")
-    plt.close(fig)
 
 
 if __name__ == "__main__":
-    run_analysis()
+    main()
